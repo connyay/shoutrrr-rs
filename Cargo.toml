@@ -1,0 +1,58 @@
+[package]
+name = "shoutrrr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Send notifications to Slack, Discord, and more from a single URL, a Rust port of nicholas-fedor/shoutrrr."
+license = "MIT"
+repository = "https://github.com/connyay/shoutrrr-rs"
+readme = "README.md"
+keywords = ["notifications", "slack", "discord", "webhook", "wasm"]
+categories = ["api-bindings", "web-programming"]
+
+[features]
+default = ["slack", "discord", "generic", "reqwest", "fanout"]
+# `regex` is only used by the Slack token/icon parsing, so it's pulled in by the feature.
+slack = ["dep:regex"]
+discord = []
+# The generic webhook service. Native none/json payloads need no extra deps; custom Go-style
+# templates live behind `generic-template` so the `gtmpl` engine stays out of the default/WASM build.
+generic = []
+generic-template = ["generic", "dep:gtmpl"]
+fanout = ["dep:futures-util"]
+# `tokio` is pulled in only for its timer (`tokio::time::sleep`), used by `ReqwestClient` to back off
+# between Discord retries. reqwest already requires a tokio runtime at runtime, so this is near-free.
+reqwest = ["dep:reqwest", "dep:tokio"]
+# The Workers transport uses the `worker` crate's `http` integration plus standard `http` types.
+worker = ["dep:worker", "dep:http", "dep:http-body-util", "dep:bytes"]
+
+[dependencies]
+url = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+regex = { version = "1", optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+tokio = { version = "1", default-features = false, features = ["time"], optional = true }
+# A pure-Rust Go `text/template` engine, used only by `generic-template` for custom payload templates.
+gtmpl = { version = "0.7", optional = true }
+
+# The Cloudflare Workers transport (`worker` feature) is only meaningful — and only compiles — on
+# wasm32. Scoping these to the target keeps `--all-features` working on native hosts.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+worker = { version = "0.8", optional = true, features = ["http"] }
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
+
+[dev-dependencies]
+pollster = "0.4"
+
+[[example]]
+name = "send"
+required-features = ["fanout"]
+
+[package.metadata.docs.rs]
+all-features = true
