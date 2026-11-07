@@ -1,6 +1,6 @@
 [package]
 name = "shoutrrr"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Send notifications to Slack, Discord, and more from a single URL, a Rust port of nicholas-fedor/shoutrrr."
