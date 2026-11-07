@@ -13,6 +13,15 @@
 //! - `WorkerClient` wraps the Cloudflare Workers `fetch` API, behind the `worker` feature on
 //!   `wasm32` targets. Because it only compiles for `wasm32`, it is absent from the docs.rs API
 //!   pages (which build for a native target); see the crate README for its usage.
+//!   `WorkerFetchClient` is the same transport with a configurable [`RedirectPolicy`].
+//!
+//! # Redirects
+//!
+//! The bundled transports follow redirects by default, as Go shoutrrr does. That's harmless for
+//! services with fixed hosts (Slack, Discord), but the generic webhook sends to whatever URL it's
+//! given, and a redirect can point that request somewhere the original URL didn't. If your URLs
+//! come from people you don't fully trust, build the transport with [`RedirectPolicy::Reject`]:
+//! [`ReqwestClient::with_redirect_policy`] or `WorkerFetchClient::with_redirect_policy`.
 
 use std::time::Duration;
 
@@ -30,7 +39,42 @@ pub use self::reqwest::ReqwestClient;
 #[cfg(all(feature = "worker", target_arch = "wasm32"))]
 mod worker;
 #[cfg(all(feature = "worker", target_arch = "wasm32"))]
-pub use self::worker::WorkerClient;
+pub use self::worker::{WorkerClient, WorkerFetchClient};
+
+/// What a bundled transport does when the server answers with a redirect (`301`, `302`, `303`,
+/// `307` or `308`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RedirectPolicy {
+    /// Follow the redirect, as Go shoutrrr does. This is the default.
+    ///
+    /// The underlying client decides the details. A `301`, `302` or `303` answer to a `POST` is
+    /// resent as a `GET` without the body, so the message is lost, yet a service that accepts any
+    /// status below `400` (the generic webhook) can still report success. reqwest drops
+    /// `Authorization` and `Cookie` when a redirect changes host, port or scheme, but custom
+    /// headers such as a generic webhook's `@X-Api-Key` go on to the new host.
+    #[default]
+    Follow,
+    /// Don't follow redirects: a redirect response fails the send with [`Error::Transport`],
+    /// whether or not it carries a `Location`. The request never leaves the original URL.
+    Reject,
+}
+
+/// Fail `response` with [`Error::Transport`] if it's a redirect and `policy` rejects redirects.
+/// The transports that support [`RedirectPolicy::Reject`] stop their client from following
+/// redirects, then pass every response through here.
+#[cfg(any(feature = "reqwest", all(feature = "worker", target_arch = "wasm32")))]
+fn check_redirect(policy: RedirectPolicy, response: HttpResponse) -> Result<HttpResponse> {
+    let is_redirect = matches!(response.status, 301 | 302 | 303 | 307 | 308);
+    if policy == RedirectPolicy::Reject && is_redirect {
+        let location = response.header("location").unwrap_or("no Location header");
+        return Err(Error::Transport(format!(
+            "redirect not followed: HTTP {} to {location} (the transport rejects redirects)",
+            response.status
+        )));
+    }
+    Ok(response)
+}
 
 /// HTTP method. Covers the standard verbs; most services only GET or POST, but the generic
 /// webhook service honors a configurable method (`?method=PUT`, etc.).
@@ -194,5 +238,52 @@ pub trait HttpClient {
     /// transport used with a retrying service should do the same.
     async fn sleep(&self, duration: Duration) {
         let _ = duration;
+    }
+}
+
+#[cfg(all(test, feature = "reqwest"))]
+mod tests {
+    use super::*;
+
+    fn response(status: u16, location: Option<&str>) -> HttpResponse {
+        HttpResponse {
+            status,
+            headers: location
+                .map(|l| vec![("Location".to_string(), l.to_string())])
+                .unwrap_or_default(),
+            body: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn reject_fails_every_redirect_status() {
+        for status in [301, 302, 303, 307, 308] {
+            let err = check_redirect(RedirectPolicy::Reject, response(status, Some("/next")))
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(&format!("HTTP {status} to /next")), "{err}");
+        }
+    }
+
+    #[test]
+    fn reject_fails_a_redirect_without_location() {
+        let err = check_redirect(RedirectPolicy::Reject, response(302, None))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("no Location header"), "{err}");
+    }
+
+    #[test]
+    fn reject_passes_other_statuses_through() {
+        for status in [200, 204, 300, 304, 404, 500] {
+            let checked = check_redirect(RedirectPolicy::Reject, response(status, Some("/next")));
+            assert_eq!(checked.unwrap().status, status);
+        }
+    }
+
+    #[test]
+    fn follow_passes_redirects_through() {
+        let checked = check_redirect(RedirectPolicy::Follow, response(302, Some("/next")));
+        assert_eq!(checked.unwrap().status, 302);
     }
 }

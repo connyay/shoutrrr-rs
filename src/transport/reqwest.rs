@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{HttpClient, HttpRequest, HttpResponse, Method};
+use super::{HttpClient, HttpRequest, HttpResponse, Method, RedirectPolicy, check_redirect};
 use crate::error::{Error, Result};
 
 /// Default per-request timeout. A bare `reqwest::Client` has none, so a stalled connection would
@@ -16,29 +16,71 @@ const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub struct ReqwestClient {
     inner: ::reqwest::Client,
+    /// [`RedirectPolicy::Reject`] only when `inner` was built not to follow redirects, so a
+    /// redirect reaches [`check_redirect`] as a plain `3xx` response.
+    redirects: RedirectPolicy,
 }
 
 impl Default for ReqwestClient {
     fn default() -> Self {
-        let inner = ::reqwest::Client::builder()
-            .timeout(DEFAULT_TIMEOUT)
-            .build()
-            // Mirrors `reqwest::Client::default()`, which also unwraps a builder that only fails if
-            // the TLS backend can't initialize.
-            .expect("default reqwest client should build");
-        Self { inner }
+        Self::with_redirect_policy(RedirectPolicy::Follow)
     }
 }
 
 impl ReqwestClient {
-    /// Create a client with a sensible default `reqwest::Client` (30s request timeout).
+    /// Create a client with a sensible default `reqwest::Client`: a 30s request timeout, and
+    /// redirects followed (up to 10).
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Create a client like [`new`](ReqwestClient::new), but with the given redirect policy.
+    ///
+    /// ```no_run
+    /// use shoutrrr::transport::{RedirectPolicy, ReqwestClient};
+    ///
+    /// // A redirect fails the send instead of sending the message somewhere else.
+    /// let http = ReqwestClient::with_redirect_policy(RedirectPolicy::Reject);
+    /// ```
+    pub fn with_redirect_policy(policy: RedirectPolicy) -> Self {
+        let redirect = match policy {
+            RedirectPolicy::Follow => ::reqwest::redirect::Policy::default(),
+            RedirectPolicy::Reject => ::reqwest::redirect::Policy::none(),
+        };
+        let inner = ::reqwest::Client::builder()
+            .timeout(DEFAULT_TIMEOUT)
+            .redirect(redirect)
+            .build()
+            // Mirrors `reqwest::Client::default()`, which also unwraps a builder that only fails if
+            // the TLS backend can't initialize.
+            .expect("default reqwest client should build");
+        Self {
+            inner,
+            redirects: policy,
+        }
+    }
+
     /// Create a client wrapping a pre-configured `reqwest::Client` (timeouts, proxies, etc.).
+    ///
+    /// Redirects are handled by `inner`'s own policy, which follows them unless you set one. To
+    /// reject them, make the policy return an error. Don't use `Policy::none()`: it hands the
+    /// `3xx` back as a response, and the generic webhook counts any status below `400` as success.
+    ///
+    /// ```no_run
+    /// use reqwest::redirect::Policy;
+    /// use shoutrrr::transport::ReqwestClient;
+    ///
+    /// let inner = reqwest::Client::builder()
+    ///     .redirect(Policy::custom(|attempt| attempt.error("redirects are rejected")))
+    ///     .build()?;
+    /// let http = ReqwestClient::from_client(inner);
+    /// # Ok::<(), reqwest::Error>(())
+    /// ```
     pub fn from_client(inner: ::reqwest::Client) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            redirects: RedirectPolicy::Follow,
+        }
     }
 }
 
@@ -85,11 +127,14 @@ impl HttpClient for ReqwestClient {
             .map_err(|e| Error::Transport(e.to_string()))?
             .to_vec();
 
-        Ok(HttpResponse {
-            status,
-            headers,
-            body,
-        })
+        check_redirect(
+            self.redirects,
+            HttpResponse {
+                status,
+                headers,
+                body,
+            },
+        )
     }
 
     async fn sleep(&self, duration: std::time::Duration) {

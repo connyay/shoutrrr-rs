@@ -7,12 +7,15 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use http_body_util::Full;
+use worker::web_sys;
 use worker::{Delay, Fetch, Request as WorkerRequest};
 
-use super::{HttpClient, HttpRequest, HttpResponse};
+use super::{HttpClient, HttpRequest, HttpResponse, RedirectPolicy, check_redirect};
 use crate::error::{Error, Result};
 
 /// An [`HttpClient`] implemented on top of the Cloudflare Workers `fetch` API.
+///
+/// It follows redirects. To reject them, use [`WorkerFetchClient`].
 #[derive(Debug, Default, Clone)]
 pub struct WorkerClient;
 
@@ -26,6 +29,37 @@ impl WorkerClient {
 #[async_trait(?Send)]
 impl HttpClient for WorkerClient {
     async fn execute(&self, request: HttpRequest) -> Result<HttpResponse> {
+        WorkerFetchClient::new().execute(request).await
+    }
+
+    async fn sleep(&self, duration: std::time::Duration) {
+        Delay::from(duration).await;
+    }
+}
+
+/// A [`WorkerClient`] with a configurable [`RedirectPolicy`].
+///
+/// [`new`](WorkerFetchClient::new) follows redirects, exactly like [`WorkerClient`].
+#[derive(Debug, Default, Clone)]
+pub struct WorkerFetchClient {
+    redirects: RedirectPolicy,
+}
+
+impl WorkerFetchClient {
+    /// Create a Workers fetch client that follows redirects.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a Workers fetch client with the given redirect policy.
+    pub fn with_redirect_policy(policy: RedirectPolicy) -> Self {
+        Self { redirects: policy }
+    }
+}
+
+#[async_trait(?Send)]
+impl HttpClient for WorkerFetchClient {
+    async fn execute(&self, request: HttpRequest) -> Result<HttpResponse> {
         let mut builder = http::Request::builder()
             .method(request.method.as_str())
             .uri(request.url.as_str());
@@ -36,8 +70,11 @@ impl HttpClient for WorkerClient {
             .body(Full::<Bytes>::new(Bytes::from(request.body)))
             .map_err(|e| Error::Transport(e.to_string()))?;
 
-        let worker_request =
+        let mut worker_request =
             WorkerRequest::try_from(http_request).map_err(|e| Error::Transport(e.to_string()))?;
+        if self.redirects == RedirectPolicy::Reject {
+            worker_request = manual_redirects(&worker_request)?;
+        }
 
         let mut response = Fetch::Request(worker_request)
             .send()
@@ -51,14 +88,28 @@ impl HttpClient for WorkerClient {
             .await
             .map_err(|e| Error::Transport(e.to_string()))?;
 
-        Ok(HttpResponse {
-            status,
-            headers,
-            body,
-        })
+        check_redirect(
+            self.redirects,
+            HttpResponse {
+                status,
+                headers,
+                body,
+            },
+        )
     }
 
     async fn sleep(&self, duration: std::time::Duration) {
         Delay::from(duration).await;
     }
+}
+
+/// Copy `request` with fetch's redirect mode set to `"manual"`, so fetch returns a redirect as a
+/// plain `3xx` response instead of following it. Workers doesn't support the `"error"` mode, and
+/// the `worker` crate's `http` conversion has no public way to set the mode, hence the copy.
+fn manual_redirects(request: &WorkerRequest) -> Result<WorkerRequest> {
+    let init = web_sys::RequestInit::new();
+    init.set_redirect(web_sys::RequestRedirect::Manual);
+    web_sys::Request::new_with_request_and_init(request.inner(), &init)
+        .map(WorkerRequest::from)
+        .map_err(|e| Error::Transport(worker::Error::from(e).to_string()))
 }

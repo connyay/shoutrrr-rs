@@ -89,6 +89,27 @@ impl HttpClient for MyClient {
 }
 ```
 
+### Redirects
+
+`ReqwestClient` and `WorkerClient` follow redirects, as Go shoutrrr does. A `POST` answered with
+`301`, `302` or `303` is resent as a bodyless `GET`, so the message is lost, and the generic webhook
+can still report success because it accepts any status below `400`. Following also lets a generic
+webhook's server send the request to a different host, along with any custom `@Header` values.
+
+If your notification URLs come from people you don't fully trust, reject redirects instead. The
+send then fails with a transport error and never leaves the original URL:
+
+```rust
+use shoutrrr::transport::{RedirectPolicy, ReqwestClient};
+
+let http = ReqwestClient::with_redirect_policy(RedirectPolicy::Reject);
+```
+
+On Workers, use `WorkerFetchClient::with_redirect_policy(RedirectPolicy::Reject)` in place of
+`WorkerClient`. If you build your own `reqwest::Client` for `ReqwestClient::from_client`, give it a
+redirect policy that returns an error. `reqwest::redirect::Policy::none()` hands the `3xx` back as a
+response, which the generic webhook counts as success.
+
 ## Supported services & URL formats
 
 | Service | URL format |
