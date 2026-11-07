@@ -1,0 +1,9 @@
+# The toolchain for local and CI builds. It's pinned so a new stable release can't fail CI on an
+# unrelated push: bump it on purpose and fix any new lints in the same change. The minimum
+# supported Rust version (`rust-version` in Cargo.toml) is checked separately by the `msrv` CI job.
+# Crates that depend on shoutrrr ignore this file.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
