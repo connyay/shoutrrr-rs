@@ -19,10 +19,10 @@ follow the same pattern.
 ```toml
 [dependencies]
 # Native (default): Slack + Discord + a reqwest transport + concurrent fan-out.
-shoutrrr = "0.1"
+shoutrrr = "0.2"
 
 # WASM / Cloudflare Workers: drop reqwest, use the Workers fetch transport.
-shoutrrr = { version = "0.1", default-features = false, features = ["slack", "discord", "worker", "fanout"] }
+shoutrrr = { version = "0.2", default-features = false, features = ["slack", "discord", "worker", "fanout"] }
 ```
 
 To track unreleased changes, point at the repository instead:
