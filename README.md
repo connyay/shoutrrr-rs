@@ -97,7 +97,8 @@ can still report success because it accepts any status below `400`. Following al
 webhook's server send the request to a different host, along with any custom `@Header` values.
 
 If your notification URLs come from people you don't fully trust, reject redirects instead. The
-send then fails with a transport error and never leaves the original URL:
+send then fails with `Error::RedirectRejected`, carrying the status and `Location`, and never
+leaves the original URL:
 
 ```rust
 use shoutrrr::transport::{RedirectPolicy, ReqwestClient};

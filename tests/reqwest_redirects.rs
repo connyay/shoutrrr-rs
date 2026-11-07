@@ -7,6 +7,7 @@ use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use shoutrrr::Error;
 use shoutrrr::transport::{HttpClient, HttpRequest, RedirectPolicy, ReqwestClient};
 
 /// A minimal HTTP/1.1 server. `/hook` answers `302` to `/landed`, `/no-location` answers `302`
@@ -100,11 +101,15 @@ fn default_client_follows_redirects() {
 fn reject_policy_fails_the_request_without_following() {
     let server = Server::start();
     let http = ReqwestClient::with_redirect_policy(RedirectPolicy::Reject);
-    let err = block_on(http.execute(post(server.url("/hook"))))
-        .unwrap_err()
-        .to_string();
+    let err = block_on(http.execute(post(server.url("/hook")))).unwrap_err();
 
-    assert!(err.contains("HTTP 302 to /landed"), "{err}");
+    assert!(
+        matches!(
+            err,
+            Error::RedirectRejected { status: 302, location: Some(ref l) } if l == "/landed"
+        ),
+        "{err:?}"
+    );
     assert_eq!(server.seen(), ["POST /hook"]);
 }
 
@@ -112,11 +117,18 @@ fn reject_policy_fails_the_request_without_following() {
 fn reject_policy_fails_a_redirect_without_location() {
     let server = Server::start();
     let http = ReqwestClient::with_redirect_policy(RedirectPolicy::Reject);
-    let err = block_on(http.execute(post(server.url("/no-location"))))
-        .unwrap_err()
-        .to_string();
+    let err = block_on(http.execute(post(server.url("/no-location")))).unwrap_err();
 
-    assert!(err.contains("HTTP 302 to no Location header"), "{err}");
+    assert!(
+        matches!(
+            err,
+            Error::RedirectRejected {
+                status: 302,
+                location: None
+            }
+        ),
+        "{err:?}"
+    );
 }
 
 #[test]
@@ -136,10 +148,11 @@ fn reject_policy_keeps_generic_from_reporting_a_redirect_as_success() {
     let server = Server::start();
     let http = ReqwestClient::with_redirect_policy(RedirectPolicy::Reject);
     let url = format!("generic+{}", server.url("/hook"));
-    let err = block_on(shoutrrr::send(&http, &url, "hi"))
-        .unwrap_err()
-        .to_string();
+    let err = block_on(shoutrrr::send(&http, &url, "hi")).unwrap_err();
 
-    assert!(err.contains("HTTP 302"), "{err}");
+    assert!(
+        matches!(err, Error::RedirectRejected { status: 302, .. }),
+        "{err:?}"
+    );
     assert_eq!(server.seen(), ["POST /hook"]);
 }

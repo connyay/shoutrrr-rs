@@ -55,23 +55,23 @@ pub enum RedirectPolicy {
     /// headers such as a generic webhook's `@X-Api-Key` go on to the new host.
     #[default]
     Follow,
-    /// Don't follow redirects: a redirect response fails the send with [`Error::Transport`],
-    /// whether or not it carries a `Location`. The request never leaves the original URL.
+    /// Don't follow redirects: a redirect response fails the send with
+    /// [`Error::RedirectRejected`], whether or not it carries a `Location`. The request never
+    /// leaves the original URL.
     Reject,
 }
 
-/// Fail `response` with [`Error::Transport`] if it's a redirect and `policy` rejects redirects.
-/// The transports that support [`RedirectPolicy::Reject`] stop their client from following
-/// redirects, then pass every response through here.
+/// Fail `response` with [`Error::RedirectRejected`] if it's a redirect and `policy` rejects
+/// redirects. The transports that support [`RedirectPolicy::Reject`] stop their client from
+/// following redirects, then pass every response through here.
 #[cfg(any(feature = "reqwest", all(feature = "worker", target_arch = "wasm32")))]
 fn check_redirect(policy: RedirectPolicy, response: HttpResponse) -> Result<HttpResponse> {
     let is_redirect = matches!(response.status, 301 | 302 | 303 | 307 | 308);
     if policy == RedirectPolicy::Reject && is_redirect {
-        let location = response.header("location").unwrap_or("no Location header");
-        return Err(Error::Transport(format!(
-            "redirect not followed: HTTP {} to {location} (the transport rejects redirects)",
-            response.status
-        )));
+        return Err(Error::RedirectRejected {
+            status: response.status,
+            location: response.header("location").map(str::to_owned),
+        });
     }
     Ok(response)
 }
@@ -258,19 +258,51 @@ mod tests {
     #[test]
     fn reject_fails_every_redirect_status() {
         for status in [301, 302, 303, 307, 308] {
-            let err = check_redirect(RedirectPolicy::Reject, response(status, Some("/next")))
-                .unwrap_err()
-                .to_string();
-            assert!(err.contains(&format!("HTTP {status} to /next")), "{err}");
+            let err = check_redirect(RedirectPolicy::Reject, response(status, Some("/next")));
+            assert!(
+                matches!(
+                    err,
+                    Err(Error::RedirectRejected { status: s, location: Some(ref l) })
+                        if s == status && l == "/next"
+                ),
+                "{err:?}"
+            );
         }
     }
 
     #[test]
     fn reject_fails_a_redirect_without_location() {
-        let err = check_redirect(RedirectPolicy::Reject, response(302, None))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("no Location header"), "{err}");
+        let err = check_redirect(RedirectPolicy::Reject, response(302, None));
+        assert!(
+            matches!(
+                err,
+                Err(Error::RedirectRejected {
+                    status: 302,
+                    location: None
+                })
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn rejected_redirect_message_names_status_and_location() {
+        let with = Error::RedirectRejected {
+            status: 302,
+            location: Some("/next".to_string()),
+        };
+        let without = Error::RedirectRejected {
+            status: 308,
+            location: None,
+        };
+        assert_eq!(
+            with.to_string(),
+            "redirect not followed: HTTP 302 to /next (the transport rejects redirects)"
+        );
+        assert_eq!(
+            without.to_string(),
+            "redirect not followed: HTTP 308 to no Location header (the transport rejects redirects)"
+        );
     }
 
     #[test]

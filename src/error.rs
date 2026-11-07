@@ -3,7 +3,10 @@
 use thiserror::Error;
 
 /// The single error type returned across the crate.
+///
+/// New variants can be added without a major version bump, so a `match` on it needs a `_` arm.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The provided string could not be parsed as a URL.
     #[error("failed to parse URL: {0}")]
@@ -32,6 +35,21 @@ pub enum Error {
     /// The underlying HTTP transport failed (DNS, TLS, connection, etc.).
     #[error("transport error: {0}")]
     Transport(String),
+
+    /// The server answered with a redirect (`301`, `302`, `303`, `307` or `308`) and the transport
+    /// was built with [`RedirectPolicy::Reject`](crate::transport::RedirectPolicy::Reject), so the
+    /// request wasn't sent on.
+    #[error(
+        "redirect not followed: HTTP {status} to {} (the transport rejects redirects)",
+        .location.as_deref().unwrap_or("no Location header")
+    )]
+    RedirectRejected {
+        /// The redirect status code.
+        status: u16,
+        /// The response's `Location` header as sent, which may be a relative URL, or `None` if it
+        /// had none.
+        location: Option<String>,
+    },
 
     /// The remote endpoint returned a non-success HTTP status.
     #[error("HTTP {status}: {body}")]
