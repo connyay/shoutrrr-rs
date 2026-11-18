@@ -63,10 +63,10 @@ jobs:
     # rust-toolchain.toml takes precedence over the default toolchain the action sets,
     # so select the MSRV explicitly for every cargo and rustc call in this job.
     env:
-      RUSTUP_TOOLCHAIN: "1.88"
+      RUSTUP_TOOLCHAIN: "1.91"
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.91
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked
 

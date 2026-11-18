@@ -1,8 +1,8 @@
 [package]
 name = "shoutrrr"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.91"
 description = "Send notifications to Slack, Discord, and more from a single URL, a Rust port of nicholas-fedor/shoutrrr."
 license = "MIT"
 repository = "https://github.com/connyay/shoutrrr-rs"
@@ -42,7 +42,7 @@ gtmpl = { version = "0.7", optional = true }
 # The Cloudflare Workers transport (`worker` feature) is only meaningful — and only compiles — on
 # wasm32. Scoping these to the target keeps `--all-features` working on native hosts.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-worker = { version = "0.8", optional = true, features = ["http"] }
+worker = { version = "0.9", optional = true, features = ["http"] }
 http = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
 bytes = { version = "1", optional = true }
