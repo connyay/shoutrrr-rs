@@ -1,8 +1,5 @@
 //! Slack JSON payload construction, ported from `slack_json.go`.
 
-use std::sync::OnceLock;
-
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::config::SlackConfig;
@@ -10,10 +7,10 @@ use super::config::SlackConfig;
 /// Maximum number of attachments allowed by the Slack API.
 const MAX_ATTACHMENTS: usize = 100;
 
-/// Matches an icon value that should be treated as a URL rather than an emoji.
-fn icon_url_pattern() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"https?://").expect("icon url pattern is a valid regex"))
+/// Whether an icon value should be treated as a URL rather than an emoji. Like the Go
+/// `iconURLPattern` (`https?://`, unanchored), this looks for the scheme anywhere in the value.
+fn is_icon_url(icon: &str) -> bool {
+    icon.contains("http://") || icon.contains("https://")
 }
 
 /// The Slack message payload. Only the fields this port populates are modeled; the omitted ones
@@ -44,12 +41,13 @@ pub(crate) struct Attachment {
 }
 
 impl MessagePayload {
-    /// Route an icon value into either `icon_url` or `icon_emoji` based on an `http(s)://` prefix.
+    /// Route an icon value into either `icon_url` or `icon_emoji`, depending on whether it holds
+    /// an `http(s)://` URL.
     fn set_icon(&mut self, icon: &str) {
         self.icon_url.clear();
         self.icon_emoji.clear();
         if !icon.is_empty() {
-            if icon_url_pattern().is_match(icon) {
+            if is_icon_url(icon) {
                 self.icon_url = icon.to_string();
             } else {
                 self.icon_emoji = icon.to_string();

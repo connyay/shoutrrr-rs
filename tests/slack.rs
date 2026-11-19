@@ -135,21 +135,34 @@ fn webhook_body(message: &str) -> serde_json::Value {
 
 #[test]
 fn icon_url_vs_emoji_routing() {
-    let mock = MockTransport::new(200, "ok");
-    let url = format!("slack://hook:{WEBHOOK_TOKEN}@webhook?icon=https://example.com/i.png");
-    pollster::block_on(shoutrrr::send(&mock, &url, "hi")).unwrap();
-    let body: serde_json::Value =
-        serde_json::from_slice(&mock.last_request().unwrap().body).unwrap();
-    assert_eq!(body["icon_url"], "https://example.com/i.png");
-    assert!(body.get("icon_emoji").is_none());
+    let send_with_icon = |icon: &str| -> serde_json::Value {
+        let mock = MockTransport::new(200, "ok");
+        let url = format!("slack://hook:{WEBHOOK_TOKEN}@webhook?icon={icon}");
+        pollster::block_on(shoutrrr::send(&mock, &url, "hi")).unwrap();
+        serde_json::from_slice(&mock.last_request().unwrap().body).unwrap()
+    };
 
-    let mock = MockTransport::new(200, "ok");
-    let url = format!("slack://hook:{WEBHOOK_TOKEN}@webhook?icon=rocket");
-    pollster::block_on(shoutrrr::send(&mock, &url, "hi")).unwrap();
-    let body: serde_json::Value =
-        serde_json::from_slice(&mock.last_request().unwrap().body).unwrap();
-    assert_eq!(body["icon_emoji"], "rocket");
-    assert!(body.get("icon_url").is_none());
+    // As in Go, an `http(s)://` anywhere in the value makes it a URL.
+    for icon in [
+        "https://example.com/i.png",
+        "http://example.com/i.png",
+        "cdn-https://example.com/i.png",
+    ] {
+        let body = send_with_icon(icon);
+        assert_eq!(body["icon_url"], icon);
+        assert!(body.get("icon_emoji").is_none(), "icon: {icon}");
+    }
+
+    for icon in [
+        "rocket",
+        "https",
+        "http:/example.com",
+        "httpx://example.com",
+    ] {
+        let body = send_with_icon(icon);
+        assert_eq!(body["icon_emoji"], icon);
+        assert!(body.get("icon_url").is_none(), "icon: {icon}");
+    }
 }
 
 #[test]
