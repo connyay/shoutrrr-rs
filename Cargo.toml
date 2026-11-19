@@ -12,8 +12,7 @@ categories = ["api-bindings", "web-programming"]
 
 [features]
 default = ["slack", "discord", "generic", "reqwest", "fanout"]
-# `regex` is only used by the Slack token/icon parsing, so it's pulled in by the feature.
-slack = ["dep:regex"]
+slack = []
 discord = []
 # The generic webhook service. Native none/json payloads need no extra deps; custom Go-style
 # templates live behind `generic-template` so the `gtmpl` engine stays out of the default/WASM build.
@@ -32,7 +31,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 async-trait = "0.1"
-regex = { version = "1", optional = true }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
 tokio = { version = "1", default-features = false, features = ["time"], optional = true }
@@ -49,6 +47,9 @@ bytes = { version = "1", optional = true }
 
 [dev-dependencies]
 pollster = "0.4"
+# The reference for the hand-written Slack token matcher: tests check the two agree. Kept out of
+# the library itself because the regex engine dominated the WASM bundle size.
+regex = "1"
 # A runtime for the tests that drive `ReqwestClient` against a local server.
 tokio = { version = "1", default-features = false, features = ["rt"] }
 
